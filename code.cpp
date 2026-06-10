@@ -5,8 +5,12 @@
 #include <vector>
 #include <cmath>
 #include <sstream>
+#include <algorithm> 
+#include <functional>
 
-std::string read_pi(const std::string filename) {
+
+// Read Pi into memory
+std::string read_pi(const std::string& filename) {
     std::ifstream file(filename);
 
     if (!file) {
@@ -21,43 +25,116 @@ std::string read_pi(const std::string filename) {
     return buffer.str();
 }
 
-
-int main() {
-    
-    std::string pi = read_pi("pi_digits.txt"); 
-
-    if (!pi.empty()) {
-        std::cout << "Successfully read pi: " << pi.substr(0, 10) << "...\n";
-    }
-
-
-    std::cout << "First 50 characters: " << pi.substr(0, 50) << std::endl;
+// generate weights of the items
+std::vector<float> generate_weights(const std::string& pi){
 
     std::vector<float> weights;
-    weights.reserve(10000);
 
-    for (int i = 0; i < 40000; i += 4) {
-        std::string sub = pi.substr(i, 4);
-        float value = std::stod(sub) / 10000.0;  // 3141 → 0.3141
-        weights.push_back(value);
+    size_t limit = std::min(pi.length(), size_t(40000));
+    if (limit < 4) return weights;
+
+    weights.reserve(limit / 4);
+
+    for (size_t i = 0; i + 3 < limit; i += 4) {
+
+        int num = (pi[i]     - '0') * 1000 +
+                  (pi[i + 1] - '0') * 100  +
+                  (pi[i + 2] - '0') * 10   +
+                  (pi[i + 3] - '0');
+
+        weights.push_back(num / 10000.0f);
     }
+    return weights;
+}
 
-    // Print normalized values
-    std::cout << "Length of the array: " << weights.size() <<  std::endl;
 
-
-    // compute lower bound
-    double lower_bound;
-    lower_bound = 0;
+// compute lower bound
+double compute_lower_bound(const std::vector<float>& weights){
+    
+    double counter = 0;
 
     for (const auto& value : weights){
-        std::cout << "adding the following number " << value << std::endl;
-        lower_bound = lower_bound + value;
-
+        counter = counter + value;
     }
-    lower_bound = std::ceil(lower_bound);
+    return std::ceil(counter);
+}
+
+float sum_bin(const std::vector<float>& bin, const float& new_weight){
+
+    float counter = 0.0f;
+    for (auto item : bin){
+        counter += item;
+    }
+    return counter + new_weight;
+}
+
+float calc_score(const std::vector<std::vector<float>>& bins){
+    float penalty = 0;
+    float bin_volume;
+    for (const auto& bin : bins){
+        bin_volume = 0;
+        for (auto value : bin){
+            bin_volume += value;
+        }
+        if (bin_volume > 1){
+            penalty += 1000;
+        }
+        else {
+            penalty += bin_volume;
+        }
+    }
+    return penalty;
+}
+
+
+int main() {
+
+    // read in Pi
+    std::string pi = read_pi("pi_digits.txt"); 
+
+    // generate weights
+    std::vector<float> weights = generate_weights(pi);
+
+    // Task 1: generate lower bound
+    double lower_bound = compute_lower_bound(weights);
     std::cout << "Lower bound of the optimization problem: " << lower_bound  << std::endl;
+
+    // Task 2: Constructive heuristic
+
+    // sort
+    std::sort(weights.begin(), weights.end(), std::greater<float>());
+
+    // create storage for bins empty array of zero's
+    std::vector<std::vector<float>> bins;
+
+    // loop over weights to allocate
+    for (auto& weight : weights){
+        // assign first bin if all are empty.
+        if (bins.empty()){
+            bins.push_back({weight});
+        }
+        else {
+            bool placed = false;
+            for (auto& bin : bins){
+
+                if (sum_bin(bin, weight) <= 1.0f) {
+                    // add to current bin
+                    bin.push_back(weight);
+                    placed = true;
+                    break;
+                }
+            }
+            if (!placed){
+                // there were no bins available
+                bins.push_back({weight});
+
+            }
+        }
+    }
+    
+    float score = calc_score(bins);
+    std::cout << "total score First Fit decreasing: " << score << std::endl;
+
 
     return 0;
 }
-
