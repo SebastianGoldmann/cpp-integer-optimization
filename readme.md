@@ -1,172 +1,129 @@
-# Advanced Algorithm Design Assignment: The Pi Bin Packing Challenge
+# Advanced Algorithm Design Assignment: The Corrupted Pi Bin Packing Challenge
 
 ## 1. Problem Context & Background
+In the study of combinatorial optimization, the *Bin Packing Problem* is a foundational NP-hard dilemma. However, real-world engineering rarely presents problems in isolation. In logistics, certain hazardous materials cannot be transported in the same vehicle. In cloud infrastructure, highly volatile virtual machines (VMs) cannot be hosted on the same physical blade due to hardware interference or security isolation protocols.
 
-The *Bin Packing Problem* is a classic combinatorial optimization problem and a foundational member of the class of *NP-hard* problems. In this assignment, you will build an optimization engine to solve a scaled-up, non-enumerable variant of this problem.
-
-To ensure the dataset is completely deterministic, pseudo-random, and highly irregular, the item sizes are derived directly from the fractional decimal digits of the mathematical constant $\pi$.
+This assignment introduces the **Bin Packing Problem with Conflicts (BPWP)**. To solve it, your optimization engine must simultaneously handle a packing constraints problem (Knapsack variant) and an independent-set partitioning problem (Graph Coloring variant). 
 
 ---
 
 ## 2. Objective
+Given an infinite supply of identical bins, each with a fixed maximum capacity $C = 1.0$, and a highly irregular sequence of item weights $W = \{w_1, w_2, \dots, w_n\}$, your goal is to distribute *all* items into the **minimum possible number of bins** while strictly respecting two independent dimensions of constraints:
 
-Given an unlimited supply of identical bins, each with a fixed maximum capacity $C = 1.0$, and a large sequence of item weights $W = \{w_1, w_2, \dots, w_n\}$, your goal is to distribute *all* items into the *minimum possible number of bins* without any single bin exceeding capacity $C$.
-
-Mathematically, for each item $i$ and bin $j$:
-
-
+1. **Capacity Constraint:** The cumulative weight of all items assigned to any single bin $j$ must never exceed $1.0$.
 $$\sum_{i \in \text{Bin}_j} w_i \le 1.0$$
+2. **Conflict Constraint:** If an edge exists between Item $A$ and Item $B$ in a global Conflict Graph ($G$), those two items **cannot** occupy the same bin, regardless of how much residual capacity that bin has left.
 
 ---
 
-## 3. The Dataset Specification (Non-Enumerable Scale)
+## 3. Adversarial Dataset Specification
+To ensure the dataset is completely deterministic, pseudo-random, yet highly irregular and non-trivial for greedy heuristics, all properties are derived directly from the fractional decimal digits of the mathematical constant $\pi$. 
 
-Because the problem is NP-hard, a brute-force approach ($O(2^n)$ or $O(n!)$) will freeze your system if $n$ is sufficiently large. For this assignment, you will scale the problem to *$n = 10,000$ items*.
+The scale of this problem is set to **$n = 10,000$ items** and exactly **$M = 15,000$ conflict edges**.
 
-### Data Generation Rule:
+### Step 1: Item Weights Generation (Heavy-Tailed Distribution)
+1. Extract the first *40,000 digits* of $\pi$ after the decimal point (starting: `141592653589...`).
+2. Group these digits into consecutive *4-digit blocks* (e.g., `1415`, `9265`, `3589`, `7932`).
+3. Normalize each block into a floating-point baseline between $0.0001$ and $0.9999$ by dividing the 4-digit integer by $10,000$.
+4. **The Adversarial Skew:** To break uniform symmetry and simulate a brutal, heavy-tailed payload distribution, square the baseline value:
+$$w_i = \left(\frac{\text{Block}_i}{10000}\right)^2$$
+This yields your precise array of 10,000 weights: $W = [0.0200, 0.8584, 0.1288, 0.6292, \dots]$.
 
-1. Extract the first *40,000 digits* of $\pi$ after the decimal point: 141592653589...
-2. Group these digits into consecutive *4-digit blocks* (e.g., 1415, 9265, 3589, 7932).
-3. Normalize each block into a floating-point value between $0.0001$ and $0.9999$ by dividing the 4-digit integer by $10,000$.
-4. This yields a precise array of $10,000$ weights:
-
-$$W = [0.1415, 0.9265, 0.3589, 0.7932, \dots]$$
-
-
+### Step 2: Conflict Graph Generation
+To generate the $15,000$ undirected conflict edges without external file dependencies:
+1. Advance to the *next* sequence of digits in $\pi$, starting precisely at **digit 40,001**.
+2. Group these digits into *5-digit blocks*.
+3. Map each block to an item index using the modulo operator: $\text{Index} = \text{Block} \pmod{10000}$.
+4. Take pairs of consecutive 5-digit blocks to form an undirected edge $(u, v)$. 
+5. *Self-loops ($u = v$) or duplicate edges must be discarded.* Continue processing 5-digit blocks sequentially until your graph contains exactly **15,000 unique conflict edges**.
 
 ---
 
 ## 4. Assignment Requirements & Architecture
-
-You are required to build a structured pipeline containing three distinct algorithmic layers. Do not use external commercial solvers (like Gurobi or CPLEX). Everything must be coded from scratch.
+You are required to build a modular optimization pipeline written entirely from scratch. External commercial solvers (e.g., Gurobi, CPLEX, SCIP) are strictly prohibited.
 
 ### Task 1: Establish the Lower Bound
-
-Before optimizing, compute the theoretical absolute minimum number of bins required. This acts as your baseline benchmark.
-
-* *Formula:* 
+Compute the theoretical absolute minimum number of bins required based strictly on mass.
 $$\text{Lower Bound} = \lceil \sum_{i=1}^{n} w_i \rceil$$
+*Note: Due to the severe constraints added by the 15,000 conflict edges, this physical bound will likely be mathematically impossible to hit, but it remains your ultimate point of comparison.*
 
+### Task 2: Conflict-Aware Heuristics (The Baseline)
+Implement modified, conflict-aware variations of the classic greedy packing algorithms:
 
-* Note: Due to packing inefficiencies, this bound is often impossible to reach, but it serves as your ultimate point of comparison.
+1. **Conflict-Aware First-Fit Decreasing (C-FFD):**
+   * Sorting by weight alone is no longer optimal. You must design a **Hybrid Priority Metric** to sort your items before packing. For example, sort by a combination of weight and vertex degree: $\text{Priority}_i = \alpha \cdot w_i + \beta \cdot \text{Degree}(i)$.
+   * Sequentially process items down your sorted priority list. Place the item into the first existing bin that has both *sufficient residual weight capacity* AND *zero conflict violations* with items already inside that bin. If no bin fits, open a new one.
+2. **Conflict-Aware Best-Fit Decreasing (C-BFD):**
+   * Use your hybrid sorted priority list. Place each item into the valid bin that yields the *tightest remaining weight capacity* while maintaining absolute conflict isolation. If no existing bin can legally host it, open a new bin.
 
-### Task 2: Constructive Heuristics (The Baseline)
+### Task 3: Metaheuristic Engine (The Core Challenge)
+Because greedy heuristics cannot foresee downstream bottlenecks caused by complex graph topologies, you must implement an iterative approximation metaheuristic to reshuffle assignments dynamically.
 
-Implement the following two deterministic greedy algorithms:
-
-1. *First-Fit Decreasing (FFD):* * Sort the 10,000 items in descending order.
-* For each item, scan the existing bins sequentially from the first one created. Place the item into the first bin that has enough residual space. If none can hold it, open a new bin.
-
-
-2. *Best-Fit Decreasing (BFD):* * Sort the items in descending order.
-* For each item, place it into the bin that has the tightest fit (i.e., the bin that will have the absolute minimum remaining space after the item is added). If no bin can hold it, open a new bin.
-
-
-
-### Task 3: Metaheuristic / Approximation (The Core Challenge)
-
-Because the constructive heuristics are local and short-sighted, you must implement an iterative approximation metaheuristic to shake up the distribution and find a tighter packing.
-
-Choose *one* of the following architectures to implement:
-
-* *Option A: Simulated Annealing (SA)*
-* Define a state as a valid configuration of bins.
-* Define a neighbor transition (e.g., pick two random items from different bins and swap them, or move a small item to a bin with matching residual capacity).
-* Design a fitness function that penalizes unevenly filled bins or rewards perfectly packed bins.
-
-
-* *Option B: Genetic Algorithm (GA)*
-* Treat a chromosome as an array representing bin assignments.
-* Implement an order-based crossover operator to prevent invalid or overfilled bins during reproduction.
-
-
+Choose **one** of the following architectures:
+* **Option A: Simulated Annealing (SA)**
+  * *State:* A complete, indexed allocation mapping all 10,000 items to active bins.
+  * *Neighborhood Move:* Implement intelligent transitions. Random swapping will consistently trigger conflict penalties. Create operators that explicitly check adjacent vertices or shift conflicting items to safe bins.
+  * *Cooling Schedule:* Design an appropriate geometric or linear cooling schedule to avoid getting trapped in local minima.
+* **Option B: Genetic Algorithm (GA)**
+  * *Chromosome:* An array of size 10,000 where the value at index $i$ denotes the bin assigned to item $i$.
+  * *Evolutionary Operators:* Standard random crossovers will create massive numbers of invalid, conflicting chromosomes. You must engineer specialized **Conflict-Aware Crossover/Mutation Operators** or a dedicated **Mendelian Repair Heuristic** that evicts conflicting nodes post-reproduction and re-homes them systematically.
 
 ---
 
-## 5. Deliverables & Evaluation Criteria
+## 5. Evaluation & The Competitive Leaderboard
+To break ties on identical bin counts and reward truly exceptional optimization, submissions will be ranked using a continuous loss function based on *Falkenauer's metric*, heavily scaled with severe economic barriers for hard constraint violations.
 
-Your final code execution must print a clean execution report to the console mapping out performance metrics.
+### The Objective Loss Function ($L$):
+$$L = K - \frac{\sum_{j=1}^{K} F_j^2}{K} + \text{Penalty}_{\text{Capacity}} + \text{Penalty}_{\text{Conflict}}$$
 
-### Expected Console Output Format:
+Where:
+* $K$ is the total number of bins used.
+* $F_j$ is the accumulated weight (fill level) of bin $j$. Squaring $F_j$ mathematically rewards highly unequal, tightly packed distributions over soft, averaged distributions.
+* $\text{Penalty}_{\text{Capacity}}$ heavily penalizes any bin where $F_j > 1.0$.
+* $\text{Penalty}_{\text{Conflict}}$ applies a catastrophic cost to every instance where a pair of conflicting items shares a bin.
 
-text
-============================================================
-THE PI BIN PACKING OPTIMIZATION REPORT
-============================================================
-Total Items Generated : 10,000 (Using 4-digit Pi chunks)
-Theoretical Minimum   : XXXX Bins
+### Mandatory Python Evaluation Function
+Your optimization pipeline must evaluate state fitness against this exact function:
 
-[ALGORITHM RESULTS]
-1. First-Fit Decreasing (FFD)
-   - Bins Used        : XXXX
-   - Execution Time   : XX.XX ms
-   - Efficiency Gap   : +X.XX% vs Lower Bound
-
-2. Best-Fit Decreasing (BFD)
-   - Bins Used        : XXXX
-   - Execution Time   : XX.XX ms
-   - Efficiency Gap   : +X.XX% vs Lower Bound
-
-3. Metaheuristic Engine (Simulated Annealing / GA)
-   - Bins Used        : XXXX
-   - Iterations Run   : XXXXX
-   - Final Gap        : +X.XX% vs Lower Bound
-============================================================
-
-
-
-### Grading Rubric:
-
-* *Correctness (30%):* Bins must never exceed $1.0$ capacity. All 10,000 items must be successfully assigned.
-* *Algorithm Design (40%):* Correct, clean execution of both FFD/BFD heuristics and a working iterative cooling or evolutionary schedule for the metaheuristic.
-* *Optimization Performance (30%):* The degree to which your metaheuristic is capable of improving upon the greedy baseline architectures.
-
-
-## 6. Addendum: Competitive Leaderboard & Evaluation Metric
-To facilitate a competitive student leaderboard, raw bin counts alone are insufficient, as many top-tier implementations will achieve identical bin counts. To break these ties and reward truly optimized, tightly packed bin configurations, submissions will be ranked using a continuous loss function based on *Falkenauer's metric*.
-Your goal is to *minimize* the following total loss score L:
-### Metric Breakdown
- * *K*: The total number of bins used in your solution (primary objective).
- * *F_j*: The total accumulated weight (fill level) of bin j, where a valid bin satisfies 0 < F_j \le 1.0.
- * *The Tie-Breaker Term (\frac{\sum F_j^2}{K})*: Squaring the fill levels mathematically rewards highly unequal distributions. For example, a solution that packs two bins at 0.9 and 0.1 yields a higher squared sum (0.81 + 0.01 = 0.82) than one that packs them evenly at 0.5 and 0.5 (0.25 + 0.25 = 0.50). This forces the metaheuristic to pack bins to the absolute brim to maximize the deducted fraction and lower the total loss.
- * *\text{Penalty}*: A severe barrier to ensure that invalid or overfilled solutions cannot claim a top spot on the leaderboard.
-> *Why This Works:* Because 0 < F_j \le 1.0, the average squared fullness term is strictly bounded between 0 and 1. Therefore, any valid solution utilizing 5,000 bins will always achieve a lower (better) loss than any valid solution utilizing 5,001 bins. Tie-breaking happens completely in the decimal spaces.
-> 
-### Handling Constraints (The Penalty Function)
-If your algorithm accidentally overflows a bin, your solution is technically invalid. To prevent invalid configurations from corrupting the leaderboard while still providing your metaheuristic with a mathematical gradient to steer back into valid territory, the penalty is calculated as:
-If all bins successfully respect the maximum capacity C = 1.0, the penalty drops to 0.
-### Reference Python Implementation
-Integrate the following function into your final evaluation pipeline. Your metaheuristic engine should optimize against this exact score.
-python
-def calculate_competitive_loss(bins_list):
+```python
+def calculate_competitive_loss(bins_list, conflict_graph, global_weights_array):
     """
-    Computes the competitive leaderboard loss for the assignment addendum.
+    Computes the competitive leaderboard loss for the BPWP assignment.
     
     Parameters:
-    bins_list (list of lists): A list where each sublist contains the weights 
-                               assigned to that specific bin.
-                               e.g., [[0.9265, 0.05], [0.1415, 0.3589, 0.4]]
-                               
-    Returns:
-    float: The final calculated loss rounded to 6 decimal places.
+    bins_list (list of lists): A list of bins, where each sublist contains the 
+                               integer IDs (0-9999) of items assigned to it.
+                               e.g., [[0, 4, 9], [1, 2], [3, 5, 6]]
+    conflict_graph (dict): Adjacency list mapping item ID -> set of conflicted item IDs.
+                           e.g., { 0: {12, 450}, 1: set(), ... }
+    global_weights_array (list): The complete 10,000 array of heavy-tailed weights.
     """
     K = len(bins_list)
     if K == 0:
         return float('inf')
         
     sum_squared_fills = 0.0
-    total_penalty = 0.0
+    capacity_penalty = 0.0
+    conflict_penalty = 0.0
     
     for r_bin in bins_list:
-        fill = sum(r_bin)
+        # 1. Compute Fill Level and Capacity Penalties
+        fill = sum(global_weights_array[item_id] for item_id in r_bin)
         sum_squared_fills += fill ** 2
         
-        # Apply a severe penalty if a bin exceeds the 1.0 capacity limit
         if fill > 1.0:
-            total_penalty += (fill - 1.0) * 1000000
+            capacity_penalty += (fill - 1.0) * 1000000
             
-    # Compute the Falkenauer-based minimization loss
+        # 2. Compute Graph Conflict Penalties
+        bin_items = set(r_bin)
+        for item_id in r_bin:
+            # Intersection finds how many items inside this bin conflict with item_id
+            conflicts_in_bin = bin_items.intersection(conflict_graph.get(item_id, set()))
+            # Each conflict pair (u, v) will be hit twice, generating a massive penalty
+            conflict_penalty += len(conflicts_in_bin) * 500000 
+
+    # Compute Falkenauer optimization metric
     tie_breaker = sum_squared_fills / K
-    loss = K - tie_breaker + total_penalty
+    loss = K - tie_breaker + capacity_penalty + conflict_penalty
     
     return round(loss, 6)
